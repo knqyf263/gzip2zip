@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"syscall"
 )
 
 var (
@@ -148,26 +149,24 @@ func localFileHeader(w io.Writer, fileName string, descriptor [16]byte) int {
 	return n
 }
 
-func fileData(w io.Writer, f *os.File, gzipOffset int) int {
+func fileData(w, f *os.File, gzipOffset int) int {
 	fi, err := f.Stat()
 	if err != nil {
 		log.Fatalf("stat error: %s", err)
 	}
 
 	// copy raw deflate stream, saving eight-byte gzip trailer
-	// TODO: use splice
-	raw := make([]byte, int(fi.Size()-8)-gzipOffset)
-	if _, err = f.Read(raw); err != nil {
-		log.Fatalf("read full error: %s", err)
-	}
-
-	// write raw deflate stream
-	n, err := w.Write(raw)
+	offset := int64(gzipOffset)
+	n, err := syscall.Splice(int(f.Fd()), &offset, int(w.Fd()), nil, int(fi.Size()-8-offset), 0)
 	if err != nil {
-		log.Fatalf("write error: %s", err)
+		log.Fatalf("splice error: %s", err)
 	}
 
-	return n
+	if _, err = f.Seek(offset, io.SeekStart); err != nil {
+		log.Fatalf("seek error: %s", err)
+	}
+
+	return int(n)
 }
 
 func dataDescriptor(w io.Writer, f *os.File, descriptor *[16]byte, csize int) int {
